@@ -1,0 +1,133 @@
+from keras.models import Sequential
+from keras.layers.convolutional import Convolution2D
+from keras.layers.core import Activation
+from keras.optimizers import SGD
+from keras import backend as K
+from keras.utils.visualize_util import plot
+
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+from scipy.misc import imresize
+import matplotlib.pyplot as plt
+import constant as c
+import utilities as u
+class Generator_class():
+    def __init__(self, models):
+        """
+        Initialize the model, for 4 different scale networks.
+        :param models:
+        """
+        self.train_height = c.TRAIN_HEIGHT
+        self.train_width = c.TRAIN_WIDTH
+        self.num_scale_net = len(c.SCALE_FMS_G)
+        self.model_4x4 = models[0]
+        self.model_8x8 = models[1]
+        self.model_16x16 = models[2]
+        self.model_32x32 = models[3]
+        self.models = self.get_model()
+
+
+    def get_model(self):
+        """
+        To get the fully connected generative models for 4 different scales.
+        :return:
+        """
+        self.define_model(model=self.model_4x4, index=0)
+        self.define_model(model=self.model_8x8, index=1)
+        self.define_model(model=self.model_16x16, index=2)
+        self.define_model(model=self.model_32x32, index=3)
+        # # To save the model graph.
+        # plot(model_4x4, to_file=c.SUMMARY_SAVE_DIR+'model_4x4.png', show_shapes=True)
+        # plot(model_8x8, to_file=c.SUMMARY_SAVE_DIR+'model_8x8.png', show_shapes=True)
+        # plot(model_16x16, to_file=c.SUMMARY_SAVE_DIR+'model_16x16.png', show_shapes=True)
+        # plot(model_32x32, to_file=c.SUMMARY_SAVE_DIR+'model_32x32.png', show_shapes=True)
+        return [self.model_4x4, self.model_8x8, self.model_16x16, self.model_32x32]
+
+    def define_model(self, model, index):
+        """
+        To define the generator model, which contains basicaly convolutional networks.
+        :param index:
+        :return:
+        """
+        # input layer
+        model.add(Convolution2D(nb_filter=c.SCALE_FMS_G[index][0 + 1],
+                                nb_row = c.SCALE_KERNEL_SIZES_G[index][0],
+                                nb_col = c.SCALE_KERNEL_SIZES_G[index][0],
+                                input_shape=(c.SCALE_SIZE[index],c.SCALE_SIZE[index],c.SCALE_FMS_G[index][0]),
+                                border_mode='same',
+                                dim_ordering='tf'))
+        model.add(Activation('relu'))
+        # intermediate layer
+        for i in range(1, len(c.SCALE_KERNEL_SIZES_G[index])):
+            model.add(Convolution2D(nb_filter=c.SCALE_FMS_G[index][i+1],
+                                    nb_row = c.SCALE_KERNEL_SIZES_G[index][i],
+                                    nb_col = c.SCALE_KERNEL_SIZES_G[index][i],
+                                    border_mode='same',
+                                    dim_ordering='tf'))
+            if i == len(c.SCALE_KERNEL_SIZES_G[index]) - 1:
+                # if last convolutional layer, add 'tanh'
+                model.add(Activation('tanh'))
+            else:
+                # if not last convolutional layer, add 'relu'
+                model.add(Activation('relu'))
+        sgd = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+        model.compile(loss='mean_squared_error', optimizer=sgd,metrics=['accuracy'])
+        # plot(model, to_file='model.png',show_shapes=True)
+        return True
+
+
+    def train_batch(self, batch, discriminator=None):
+        self.scale_preds_train = []
+        self.scale_gts_train = []
+        input_frames = batch[:,:,:,:-3]
+        next_frames = batch[:,:,:,-3:]
+        generators = self.models
+        for scale_num in range(self.num_scale_net):
+            if scale_num > 0:
+                last_scale_pred_train = self.scale_preds_train[scale_num-1]
+            else:
+                last_scale_pred_train = None
+
+            train_preds, train_gts = self.calculate(inputs=input_frames,
+                                              gts=next_frames,
+                                              last_gen_frames=last_scale_pred_train,
+                                              model=generators[scale_num],
+                                              scale_num=scale_num)
+            self.scale_preds_train.append(train_preds)
+            self.scale_gts_train.append(train_gts)
+
+        return self.scale_preds_train, self.scale_gts_train
+
+
+
+    def calculate(self,inputs, gts, last_gen_frames, model, scale_num):
+        scale_factor = 1. / 2 ** ((self.num_scale_net - 1) - scale_num)
+        scale_height = int(self.train_height * scale_factor)
+        scale_width = int(self.train_width * scale_factor)
+        scale_shape = [scale_height, scale_width]
+        input_frames = tf.image.resize_images(inputs, scale_shape)
+        next_frames = tf.image.resize_images(gts, scale_shape)
+        # for all scales but the first, add the frame generated by the last scale to the input
+        if scale_num > 0:
+            last_gen_frames = tf.image.resize_images(last_gen_frames, scale_shape)
+            input_frames =tf.concat(3,[input_frames, last_gen_frames])
+        with tf.Session():
+            input_frames = input_frames.eval()
+            next_frames = next_frames.eval()
+        # training
+        model.train_on_batch(x=input_frames,y=next_frames)
+        layer_size = len(model.layers)
+        get_last_layer_output = K.function([model.layers[0].input],
+                                           [model.layers[layer_size-1].output])
+        # output in test mode = 0
+        pred_frames = get_last_layer_output([input_frames])[0]
+        return pred_frames, next_frames
+
+
+    def test_train_batch(self, batch, discriminator=None):
+        # # #
+        # Split into inputs and outputs
+        # batch[c.BATCH_SIZE, c.TRAIN_HEIGHT, c.TRAIN_WIDTH, (3 * (c.HIST_LEN + 1))]
+        # # #
+        return True
