@@ -7,4 +7,4 @@ g_model.py is Tensorflow version of generator model.
 
 Now, I want to modify the network to be suitable for an intuitive physics learning. To do that, I need two views with the similar viewpoint(but not identical) theoretically. We want to train those two videos simultaneously to get the dense depth map. But how to relate them??
 
-We will see next semester...TBC
+TBC...
